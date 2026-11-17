@@ -1,0 +1,18 @@
+/参考/
+
+# Keil generated build artifacts
+*.axf
+*.crf
+*.d
+*.dep
+*.hex
+*.lnp
+*.lst
+*.map
+*.o
+/MDK-ARM/smart_cars/*.htm
+
+# Local Keil workspace settings and logs
+*.uvoptx
+*.uvguix.*
+/.vscode/*.log
