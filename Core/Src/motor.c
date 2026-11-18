@@ -1,6 +1,7 @@
 #include "motor.h"
 #include "encoder.h"
 #include "tim.h"
+#include "main.h"
 
 #define MOTOR_SPEED_FULL_SCALE_MM_S 100.0f
 #define MOTOR_SPEED_SAMPLE_PERIOD_MS 10U

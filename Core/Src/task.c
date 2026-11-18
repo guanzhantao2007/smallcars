@@ -8,16 +8,21 @@
 #include "tim.h"
 #include "usart.h"
 #include <stdint.h>
-
+//------------------------------UART协议相关--------------------------------
 #define OBSTACLE_MARK  0x4EU
 #define FRAME_END      0x5AU
 #define GARAGE_COUNT   6U
 #define UART_DMA_BUFFER_SIZE 64U
 #define UART_FIFO_CAPACITY   256U
+//------------------------------电机相关------------------------------------ 
+#define BASE_SPEED 10
+#define ahead 1
+#define back 0
 
 typedef enum
 {
-  FRAME_HEADER_SLOT = 0xCCU
+  FRAME_HEADER_SLOT = 0xCCU,
+  FRAME_HEADER_LINE  = 0xAA
 } FrameHeader_t;
 
 typedef enum
@@ -43,8 +48,16 @@ static FrameParserState_t frame_parser_state = FRAME_WAIT_HEADER;
 static FrameHeader_t current_frame_header;//解释：当前帧头信息，用于存储接收到的帧的头部信息
 static uint8_t current_frame_status;//解释：当前帧状态，用于存储接收到的帧的状态信息
 static uint8_t current_frame_slot;//解释：当前帧车位，用于存储接收到的帧的车位信息
+static uint8_t current_frame_line_error;//解释：当前帧循迹误差，用于存储接收到的帧的循迹误差信息
+static int8_t line_error=0;//解释：循迹误差，用于存储当前的循迹误差值把接收到的误差映射在-127到127之间，表示循迹偏离的程度和方向
+//extern  all_task_state_t current_task_state;//声明全局变量，表示当前任务状态
+static double base_speed=BASE_SPEED;//解释：基础速度，用于存储当前的基础速度值，范围为-127到127，表示车辆的前进或后退速度
 
-extern  all_task_state_t current_task_state;//声明全局变量，表示当前任务状态
+Motor motorFL = {1, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
+Motor motorFR = {2, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
+Motor motorRL = {3, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
+Motor motorRR = {4, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
+
 
 static uint16_t UartFifo_Next(uint16_t index)
 {
