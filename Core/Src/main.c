@@ -33,7 +33,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+all_task_state_t current_task_state=SELECT_TASK;//创建全局变量，表示当前任务状态
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/

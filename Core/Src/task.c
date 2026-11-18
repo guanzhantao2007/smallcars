@@ -1,5 +1,5 @@
 #include "task.h"
-
+#include "main.h"
 #include "encoder.h"
 #include "i2c.h"
 #include "imu.h"
@@ -25,6 +25,7 @@ typedef enum
   FRAME_WAIT_HEADER = 0U,//解释：等待帧头状态，表示当前正在等待接收帧的头部信息
   FRAME_READ_STATUS,//解释：读取状态状态，表示当前正在读取帧的状态信息
   FRAME_READ_SLOT,//解释：读取车位状态，表示当前正在读取帧的车位信息
+  READ_LINE_ERROR,//解释：读取循迹误差状态，表示当前正在读取帧的循迹误差信息
   FRAME_WAIT_END//解释：等待帧尾状态，表示当前正在等待接收帧的尾部信息
 } FrameParserState_t;
 
@@ -34,7 +35,7 @@ static volatile uint16_t uart_fifo_head;//解释：用于指示FIFO缓冲区中�
 static volatile uint16_t uart_fifo_tail;//解释：用于指示FIFO缓冲区中下一个可读取数据的位置的索引
 static uint16_t uart_dma_position;//解释：用于指示DMA缓冲区中下一个可读取数据的位置的索引
 static volatile uint8_t frame_ready;//解释：帧就绪标志，用于指示是否接收到完整的帧
-static uint8_t garage_status[GARAGE_COUNT];//解释：车位状态数组，用于存储每个车位的状态信息
+uint8_t garage_status[GARAGE_COUNT];//解释：车位状态数组，用于存储每个车位的状态信息
 static uint8_t garage_known_mask;//解释：车位已知状态掩码，用于标记哪些车位的状态已知
 static uint8_t display_pending;//解释：显示待处理标志，用于指示是否需要更新OLED显示
 static volatile uint8_t uart_error;//解释：串口错误标志，用于指示是否发生了串口通信错误
@@ -42,6 +43,8 @@ static FrameParserState_t frame_parser_state = FRAME_WAIT_HEADER;
 static FrameHeader_t current_frame_header;//解释：当前帧头信息，用于存储接收到的帧的头部信息
 static uint8_t current_frame_status;//解释：当前帧状态，用于存储接收到的帧的状态信息
 static uint8_t current_frame_slot;//解释：当前帧车位，用于存储接收到的帧的车位信息
+
+extern  all_task_state_t current_task_state;//声明全局变量，表示当前任务状态
 
 static uint16_t UartFifo_Next(uint16_t index)
 {
@@ -261,7 +264,7 @@ TaskState_t Task1_Run(void)
     return TASK_ERROR;
   }
 
-  if (frame_ready != 0U)
+  if (frame_ready != 0U)//解释：如果帧就绪标志为1，表示有完整的帧可供处理
   {
     while (uart_fifo_tail != uart_fifo_head)//解释：当FIFO缓冲区中有数据时，循环处理接收到的数据
     {
@@ -282,7 +285,7 @@ TaskState_t Task1_Run(void)
   {
     return TASK_ERROR;
   }
-  if (display_pending == 0U)
+  if (display_pending == 0U)//解释：如果显示待处理标志为0，表示没有需要更新的车位状态信息，则返回任务运行状态
   {
     return TASK_RUNNING;
   }
@@ -291,7 +294,7 @@ TaskState_t Task1_Run(void)
   {
     snapshot[i] = garage_status[i];
   }
-  known_mask = garage_known_mask;
+  known_mask = garage_known_mask;//解释：将车位状态的快照和已知状态掩码存储到局部变量中，以便在OLED显示函数中使用
   display_pending = 0U;
 
   Garage_Display(snapshot, known_mask);//解释：调用Garage_Display函数，将车位状态的快照和已知状态掩码传递给OLED显示函数，更新OLED显示屏上的车位状态信息

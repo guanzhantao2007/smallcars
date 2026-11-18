@@ -53,6 +53,13 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+//创建所有任务全局枚举
+typedef enum {
+  SELECT_TASK=0U,//选择任务
+  TASK_CONFIG=1U,  //任务配置
+  TASK_RUN=2U,     //任务运行
+  TASK_END=3U       //任务结束
+} all_task_state_t;
 
 /* USER CODE END EFP */
 

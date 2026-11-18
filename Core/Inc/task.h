@@ -2,14 +2,16 @@
 #define TASK_H
 
 #include "main.h"
-
 //创建任务状态枚举
 typedef enum {
     TASK_BENGIN = 0U, //任务初始化状态
     TASK_RUNNING=1U,   //任务运行状态
-    TASK_STOP=3U,      //任务停止状态
-    TASK_ERROR=2U      //任务错误状态
+    LINE_STATE =2U,     //循迹状态
+    LINE_STOP=3U,      //循迹停止状态
+    TASK_STOP=4U,      //任务停止状态
+    TASK_ERROR=5U      //任务错误状态
 } TaskState_t;
+
 
 HAL_StatusTypeDef Task_Init(void);
 TaskState_t Task1_Run(void);
