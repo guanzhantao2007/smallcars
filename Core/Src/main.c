@@ -24,10 +24,14 @@
 #include "usart.h"
 #include "gpio.h"
 
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "task.h"
+#include "encoder.h"
 #include <stdint.h>
+#include <stdio.h>
+#include "motor.h"
 
 /* USER CODE END Includes */
 
@@ -38,6 +42,10 @@ all_task_state_t current_task_state=SELECT_TASK;//创建全局变量，表示当
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+extern Motor motorFL;
+extern Motor motorFR;
+extern Motor motorRL;
+extern Motor motorRR;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,6 +75,7 @@ void SystemClock_Config(void);
   */
 int main(void)
 {
+  uint32_t last_encoder_print_tick;
 
   /* USER CODE BEGIN 1 */
 
@@ -114,13 +123,40 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+//Motor motorRL = {1, 200, 1, 0.15f, 0.05f, 0.0f};
+//Motor motorRR = {2, 200, 0, 0.15f, 0.0615f, 0.0f};
+//Motor motorFL = {3, 200, 1, 0.132f, 0.04f, 0.0f};
+//Motor motorFR = {4, 200, 0, 0.145f, 0.051f, 0.0f};
+printf("successful initialization\n");
+  last_encoder_print_tick = HAL_GetTick();
   while (1)
   {
-    if (Task1_Run() == TASK_ERROR)
-    { 
-      
-      Error_Handler();
+    uint32_t now;
+
+    //motor_pid_run(motorFL);
+    //motor_pid_run(motorFR);
+    //motor_pid_run(motorRL);
+    //motor_pid_run(motorRR);
+
+   
+  
+
+
+    //if (Task1_Run() == TASK_ERROR)
+    //{ 
+    //  printf("Task1_Run() returned TASK_ERROR\n");
+      //Error_Handler();
+    //}
+
+    now = HAL_GetTick();
+    if ((uint32_t)(now - last_encoder_print_tick) >= 1000U)
+    {
+      last_encoder_print_tick = now;
+      printf("motorRL:%+ld mm/s\n",
+             (long)encoder_get_speed(1));
+            
     }
+
 
     /* USER CODE END WHILE */
 

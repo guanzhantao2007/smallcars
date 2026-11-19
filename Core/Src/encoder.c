@@ -25,10 +25,10 @@ typedef struct {
 } EncoderState;
 
 static const EncoderConfig encoder_configs[] = {
-    {1, &htim5, 1},// 电机1使用TIM5，正向计数
-    {2, &htim3, -1},// 电机2使用TIM3，反向计数
-    {3, &htim8, 1},// 电机3使用TIM8，正向计数
-    {4, &htim4, -1}// 电机4使用TIM4，反向计数
+    {1, &htim5, -1},// 电机1使用TIM5，反向计数时表示正向
+    {2, &htim3, 1},// 电机2使用TIM3，正向计数时表示正向
+    {3, &htim8, -1},// 电机3使用TIM8，反向计数时表示正向
+    {4, &htim4, -1}// 电机4使用TIM4，反向计数时表示正向
 };// 电机编码器配置
 
 static EncoderState encoder_states[sizeof(encoder_configs) / sizeof(encoder_configs[0])];// 电机编码器状态数组

@@ -3,7 +3,7 @@
 #include "tim.h"
 #include "main.h"
 
-#define MOTOR_SPEED_FULL_SCALE_MM_S 100.0f
+#define MOTOR_PWM_FULL_SCALE_PERCENT 100.0f
 #define MOTOR_SPEED_SAMPLE_PERIOD_MS 10U
 #define MOTOR_COUNT 4U
 
@@ -15,6 +15,88 @@ typedef struct {
 } MotorPidState;
 
 static MotorPidState motor_pid_states[MOTOR_COUNT];
+
+uint64_t speed2pluse(float speed, TIM_HandleTypeDef *timer)
+{
+    uint64_t period = (uint64_t)__HAL_TIM_GET_AUTORELOAD(timer) + 1U;
+    float drive_counts;
+
+    if (!(speed > 0.0f)) {
+        speed = 0.0f;
+    } else if (speed > MOTOR_PWM_FULL_SCALE_PERCENT) {
+        speed = MOTOR_PWM_FULL_SCALE_PERCENT;
+    }
+
+    drive_counts = ((float)period * speed / MOTOR_PWM_FULL_SCALE_PERCENT) + 0.5f;
+    return period - (uint64_t)drive_counts;
+}
+
+static uint32_t motor_get_oc_mode(TIM_HandleTypeDef *timer, uint32_t channel)//
+{
+    switch (channel) {
+    case TIM_CHANNEL_1:
+        return (timer->Instance->CCMR1 & TIM_CCMR1_OC1M) >> TIM_CCMR1_OC1M_Pos;
+    case TIM_CHANNEL_2:
+        return (timer->Instance->CCMR1 & TIM_CCMR1_OC2M) >> TIM_CCMR1_OC2M_Pos;
+    case TIM_CHANNEL_3:
+        return (timer->Instance->CCMR2 & TIM_CCMR2_OC3M) >> TIM_CCMR2_OC3M_Pos;
+    case TIM_CHANNEL_4:
+        return (timer->Instance->CCMR2 & TIM_CCMR2_OC4M) >> TIM_CCMR2_OC4M_Pos;
+    default:
+        Error_Handler();
+        return 0U;
+    }
+}
+
+static void motor_configure_oc_mode(TIM_HandleTypeDef *timer,
+                                    uint32_t channel,
+                                    uint32_t mode)
+{
+    TIM_OC_InitTypeDef config = {0};
+    HAL_StatusTypeDef status;
+
+    config.OCMode = mode;
+    config.Pulse = 0U;
+    config.OCPolarity = TIM_OCPOLARITY_HIGH;
+    config.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+    config.OCFastMode = TIM_OCFAST_DISABLE;
+    config.OCIdleState = TIM_OCIDLESTATE_RESET;
+    config.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+
+    if (mode == TIM_OCMODE_PWM1) {
+        status = HAL_TIM_PWM_ConfigChannel(timer, &config, channel);
+    } else {
+        status = HAL_TIM_OC_ConfigChannel(timer, &config, channel);
+    }
+
+    if (status != HAL_OK) {
+        Error_Handler();
+    }
+}
+
+static void motor_set_compare(TIM_HandleTypeDef *timer,
+                              uint32_t channel,
+                              uint64_t compare,
+                              uint64_t period)
+{
+    if (compare > UINT16_MAX) {
+        if (compare != period) {
+            Error_Handler();
+            return;
+        }
+        if (motor_get_oc_mode(timer, channel) !=
+            (TIM_OCMODE_FORCED_ACTIVE >> TIM_CCMR1_OC1M_Pos)) {
+            motor_configure_oc_mode(timer, channel, TIM_OCMODE_FORCED_ACTIVE);
+        }
+        return;
+    }
+
+    if (motor_get_oc_mode(timer, channel) !=
+        (TIM_OCMODE_PWM1 >> TIM_CCMR1_OC1M_Pos)) {
+        motor_configure_oc_mode(timer, channel, TIM_OCMODE_PWM1);
+    }
+    __HAL_TIM_SET_COMPARE(timer, channel, (uint32_t)compare);
+}
 
 void motor_init(void)
 {
@@ -39,30 +121,15 @@ void motor_init(void)
     }
 }
 
-uint16_t speed2pluse(float speed)
-{
-    uint32_t period = __HAL_TIM_GET_AUTORELOAD(&htim1);
-
-    if (speed < 0.0f) {
-        speed = -speed;
-    }
-    if (!(speed > 0.0f) || period == 0U) {
-        return 0U;
-    }
-    if (speed >= MOTOR_SPEED_FULL_SCALE_MM_S) {
-        return (period > UINT16_MAX) ? UINT16_MAX : (uint16_t)period;
-    }
-
-    return (uint16_t)((speed * (float)period / MOTOR_SPEED_FULL_SCALE_MM_S) + 0.5f);//为什么要加0.5f？因为这是四舍五入的技巧，将浮点数转换为整数时，直接截断会导致精度损失，而加上0.5f后再取整，可以实现四舍五入的效果，从而得到更准确的脉冲值。
-}
-
-
 void motor_run(Motor motor)
 {
     TIM_HandleTypeDef *timer;
     uint32_t in1_channel;
     uint32_t in2_channel;
-    uint16_t pulse;
+    int motor_direction;
+    uint64_t period;
+    uint64_t pwm_compare;
+    uint64_t fixed_high_compare;
 
     if (motor.dir != 0 && motor.dir != 1) {
         Error_Handler();
@@ -95,9 +162,26 @@ void motor_run(Motor motor)
         return;
     }
 
-    pulse = speed2pluse((float)motor.speed);
-    __HAL_TIM_SET_COMPARE(timer, in1_channel, (motor.dir == 1) ? pulse : 0U);
-    __HAL_TIM_SET_COMPARE(timer, in2_channel, (motor.dir == 0) ? pulse : 0U);
+    motor_direction = motor.dir;
+    /* Motor 1 is correctly oriented; motors 2-4 need the opposite drive polarity. */
+    if (motor.motor_id != 1) {
+        motor_direction = 1 - motor_direction;
+    }
+
+    period = (uint64_t)__HAL_TIM_GET_AUTORELOAD(timer) + 1U;
+    pwm_compare = speed2pluse((float)motor.speed, timer);
+    fixed_high_compare = period;
+
+    if (motor.speed <= 0.0) {
+        motor_set_compare(timer, in1_channel, fixed_high_compare, period);
+        motor_set_compare(timer, in2_channel, fixed_high_compare, period);
+    } else if (motor_direction == 1) {
+        motor_set_compare(timer, in1_channel, fixed_high_compare, period);
+        motor_set_compare(timer, in2_channel, pwm_compare, period);
+    } else {
+        motor_set_compare(timer, in1_channel, pwm_compare, period);
+        motor_set_compare(timer, in2_channel, fixed_high_compare, period);
+    }
 }
 
 void motor_pid_run(Motor motor)
@@ -136,9 +220,7 @@ void motor_pid_run(Motor motor)
     dt_seconds = (float)elapsed_ms / 1000.0f;
     state->previous_tick = current_tick;
 
-    target_speed = (motor.speed >= MOTOR_SPEED_FULL_SCALE_MM_S)
-                       ? MOTOR_SPEED_FULL_SCALE_MM_S
-                       : (float)motor.speed;
+    target_speed = (float)motor.speed;
     measured_speed = encoder_get_speed(motor.motor_id);
     if (motor.dir == 0) {
         measured_speed = -measured_speed;
@@ -164,8 +246,8 @@ void motor_pid_run(Motor motor)
                  motor.i * candidate_integral +
                  motor.d * derivative;
 
-    if ((raw_output >= 0.0f && raw_output <= MOTOR_SPEED_FULL_SCALE_MM_S) ||
-        (raw_output > MOTOR_SPEED_FULL_SCALE_MM_S && error < 0.0f) ||
+    if ((raw_output >= 0.0f && raw_output <= MOTOR_PWM_FULL_SCALE_PERCENT) ||
+        (raw_output > MOTOR_PWM_FULL_SCALE_PERCENT && error < 0.0f) ||
         (raw_output < 0.0f && error > 0.0f)) {
         state->integral = candidate_integral;
     }
@@ -175,8 +257,8 @@ void motor_pid_run(Motor motor)
              motor.d * derivative;
     if (output < 0.0f) {
         output = 0.0f;
-    } else if (output > MOTOR_SPEED_FULL_SCALE_MM_S) {
-        output = MOTOR_SPEED_FULL_SCALE_MM_S;
+    } else if (output > MOTOR_PWM_FULL_SCALE_PERCENT) {
+        output = MOTOR_PWM_FULL_SCALE_PERCENT;
     }
 
     state->previous_measurement = measured_speed;

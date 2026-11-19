@@ -15,7 +15,8 @@
 #define UART_DMA_BUFFER_SIZE 64U
 #define UART_FIFO_CAPACITY   256U
 //------------------------------电机相关------------------------------------ 
-#define BASE_SPEED 10
+#define BASE_SPEED 150
+#define LINE_STEERING_GAIN 0.0f//解释：循迹转向增益，用于调整循迹误差对电机速度的影响程度
 #define ahead 1
 #define back 0
 
@@ -53,10 +54,12 @@ static int8_t line_error=0;//解释：循迹误差，用于存储当前的循迹
 //extern  all_task_state_t current_task_state;//声明全局变量，表示当前任务状态
 static double base_speed=BASE_SPEED;//解释：基础速度，用于存储当前的基础速度值，范围为-127到127，表示车辆的前进或后退速度
 
-Motor motorFL = {1, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
-Motor motorFR = {2, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
-Motor motorRL = {3, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
-Motor motorRR = {4, ahead, 0.0f, 0.0f, 0.0f, 0.0f};
+Motor motorRL = {1, BASE_SPEED, 1, 0.15f, 0.05f, 0.0f};
+Motor motorRR = {2, BASE_SPEED, 1, 0.15f, 0.0615f, 0.0f};
+Motor motorFL = {3, BASE_SPEED, 1, 0.132f, 0.04f, 0.0f};
+Motor motorFR = {4, BASE_SPEED, 1, 0.145f, 0.051f, 0.0f};
+static uint8_t line_tracking_active;
+static uint8_t task1_finished;
 
 
 static uint16_t UartFifo_Next(uint16_t index)
@@ -77,6 +80,66 @@ static void GarageStatus_Process(uint8_t status, uint8_t slot)//解释：处理�
   display_pending = 1U;//解释：将显示待处理标志设置为1，表示需要更新OLED显示
 }
 
+static int8_t LineError_Decode(uint8_t raw_error)
+{
+  int16_t decoded_error = (raw_error <= 127U)
+                              ? (int16_t)raw_error
+                              : (int16_t)raw_error - 256;
+
+  if (decoded_error < -127)
+  {
+    decoded_error = -127;
+  }
+  return (int8_t)decoded_error;
+}
+
+static void LineTracking_Apply(void)
+{
+  /* Negative error turns right; positive error turns left. */
+  double correction = -(double)line_error * LINE_STEERING_GAIN;
+  double left_speed = base_speed + correction;
+  double right_speed = base_speed - correction;
+
+  if (left_speed < 0.0)
+  {
+    left_speed = 0.0;
+  }
+  else if (left_speed > 1000.0)
+  {
+    left_speed = 1000.0;
+  }
+  if (right_speed < 0.0)
+  {
+    right_speed = 0.0;
+  }
+  else if (right_speed > 1000.0)
+  {
+    right_speed = 1000.0;
+  }
+
+  motorFL.speed = left_speed;
+  motorRL.speed = left_speed;
+  motorFR.speed = right_speed;
+  motorRR.speed = right_speed;
+  motor_pid_run(motorFL);
+  motor_pid_run(motorRL);
+  motor_pid_run(motorFR);
+  motor_pid_run(motorRR);
+}
+
+static void LineTracking_Stop(void)
+{
+  motorFL.speed = 0.0;
+  motorFR.speed = 0.0;
+  motorRL.speed = 0.0;
+  motorRR.speed = 0.0;
+  motor_pid_run(motorFL);
+  motor_pid_run(motorFR);
+  motor_pid_run(motorRL);
+  motor_pid_run(motorRR);
+  line_tracking_active = 0U;
+}
+
 static void FrameParser_ProcessByte(uint8_t byte)
 {
   switch (frame_parser_state)//解释：根据当前的帧解析状态进行处理
@@ -86,6 +149,11 @@ static void FrameParser_ProcessByte(uint8_t byte)
       {
         current_frame_header = FRAME_HEADER_SLOT;
         frame_parser_state = FRAME_READ_STATUS;
+      }
+      else if (byte == (uint8_t)FRAME_HEADER_LINE)
+      {
+        current_frame_header = FRAME_HEADER_LINE;
+        frame_parser_state = READ_LINE_ERROR;
       }
       break;
 
@@ -114,6 +182,11 @@ static void FrameParser_ProcessByte(uint8_t byte)
       }
       break;
 
+    case READ_LINE_ERROR:
+      current_frame_line_error = byte;
+      frame_parser_state = FRAME_WAIT_END;
+      break;
+
     case FRAME_WAIT_END:
       if (byte == FRAME_END)
       {
@@ -122,15 +195,27 @@ static void FrameParser_ProcessByte(uint8_t byte)
           case FRAME_HEADER_SLOT:
             GarageStatus_Process(current_frame_status, current_frame_slot);
             break;
+          case FRAME_HEADER_LINE:
+            line_error = LineError_Decode(current_frame_line_error);
+            if (line_tracking_active != 0U)
+            {
+              LineTracking_Apply();
+            }
+            break;
           default:
             break;
         }
         frame_parser_state = FRAME_WAIT_HEADER;
       }
-      else if (byte == (uint8_t)FRAME_HEADER_SLOT)
+      else if ((byte == (uint8_t)FRAME_HEADER_SLOT) ||
+               (byte == (uint8_t)FRAME_HEADER_LINE))
       {
-        current_frame_header = FRAME_HEADER_SLOT;
-        frame_parser_state = FRAME_READ_STATUS;
+        current_frame_header = (byte == (uint8_t)FRAME_HEADER_SLOT)
+                                   ? FRAME_HEADER_SLOT
+                                   : FRAME_HEADER_LINE;
+        frame_parser_state = (current_frame_header == FRAME_HEADER_SLOT)
+                                 ? FRAME_READ_STATUS
+                                 : READ_LINE_ERROR;
       }
       else
       {
@@ -208,6 +293,10 @@ HAL_StatusTypeDef Task_Init(void)
   display_pending = 1U;//解释：初始化显示待处理标志
   uart_error = 0U;//解释：初始化串口错误标志
   frame_parser_state = FRAME_WAIT_HEADER;
+  current_frame_line_error = 0U;
+  line_error = 0;
+  line_tracking_active = 0U;
+  task1_finished = 0U;
 
   __HAL_UART_CLEAR_IDLEFLAG(&huart1);
   status = HAL_UART_Receive_DMA(&huart1, uart_dma_buffer,
@@ -274,7 +363,17 @@ TaskState_t Task1_Run(void)
 
   if (uart_error != 0U)
   {
+    LineTracking_Stop();
     return TASK_ERROR;
+  }
+  if (task1_finished != 0U)
+  {
+    return TASK_STOP;
+  }
+  if (line_tracking_active == 0U)
+  {
+    line_tracking_active = 1U;
+    LineTracking_Apply();
   }
 
   if (frame_ready != 0U)//解释：如果帧就绪标志为1，表示有完整的帧可供处理
@@ -296,26 +395,35 @@ TaskState_t Task1_Run(void)
 
   if (uart_error != 0U)
   {
+    LineTracking_Stop();
     return TASK_ERROR;
   }
-  if (display_pending == 0U)//解释：如果显示待处理标志为0，表示没有需要更新的车位状态信息，则返回任务运行状态
+  if (garage_known_mask == (uint8_t)((1U << GARAGE_COUNT) - 1U))
   {
-    return TASK_RUNNING;
+    LineTracking_Stop();
+    task1_finished = 1U;
   }
 
-  for (i = 0U; i < GARAGE_COUNT; ++i)
+  if (display_pending != 0U)
   {
-    snapshot[i] = garage_status[i];
-  }
-  known_mask = garage_known_mask;//解释：将车位状态的快照和已知状态掩码存储到局部变量中，以便在OLED显示函数中使用
-  display_pending = 0U;
+    for (i = 0U; i < GARAGE_COUNT; ++i)
+    {
+      snapshot[i] = garage_status[i];
+    }
+    known_mask = garage_known_mask;
+    display_pending = 0U;
 
-  Garage_Display(snapshot, known_mask);//解释：调用Garage_Display函数，将车位状态的快照和已知状态掩码传递给OLED显示函数，更新OLED显示屏上的车位状态信息
-  if (OLED_Update() != HAL_OK)
-  {
-    return TASK_ERROR;
+    Garage_Display(snapshot, known_mask);
+    if (OLED_Update() != HAL_OK)
+    {
+      return TASK_ERROR;
+    }
   }
-  return TASK_RUNNING;
+  if (task1_finished != 0U)
+  {
+    return TASK_STOP;
+  }
+  return LINE_STATE;
 }
 
 void Task1_UartError(void)
