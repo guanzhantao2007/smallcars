@@ -23,6 +23,52 @@
 /* USER CODE BEGIN 0 */
 #include <stdio.h>
 
+/*
+ * printf 重定向 —— 两条工具链各走各的分支，互不影响。
+ *
+ *   GCC  : newlib 的 printf 最终调用 _write()，覆盖它即可。
+ *   ARMCC: MicroLIB 的 printf 最终调用 fputc()，并要求关掉半主机。
+ *
+ * 行为保持一致：遇到 '\n' 先补一个 '\r'，这样普通串口助手不会显示成阶梯状。
+ * 注意：后续接 VOFA+ (FireWater 协议) 时不要用 printf 发数据帧，
+ *       那个协议要求纯 '\n' 结尾，会单独写发送函数。
+ */
+#if defined(__GNUC__)
+
+#include <stdint.h>
+
+int _write(int fd, char *ptr, int len)
+{
+  int i;
+
+  (void)fd;
+  if ((ptr == NULL) || (len <= 0))
+  {
+    return 0;
+  }
+
+  for (i = 0; i < len; ++i)
+  {
+    uint8_t byte = (uint8_t)ptr[i];
+
+    if (byte == (uint8_t)'\n')
+    {
+      uint8_t cr = (uint8_t)'\r';
+      if (HAL_UART_Transmit(&huart2, &cr, 1U, HAL_MAX_DELAY) != HAL_OK)
+      {
+        return -1;
+      }
+    }
+    if (HAL_UART_Transmit(&huart2, &byte, 1U, HAL_MAX_DELAY) != HAL_OK)
+    {
+      return -1;
+    }
+  }
+  return len;
+}
+
+#else
+
 struct __FILE {
   int handle;
 };
@@ -59,6 +105,8 @@ int fputc(int character, FILE *stream)
   }
   return (unsigned char)character;
 }
+
+#endif
 
 /* USER CODE END 0 */
 

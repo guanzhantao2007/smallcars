@@ -1,0 +1,68 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "构建 (Build)",
+      "type": "shell",
+      "command": "C:/Users/orange/.workbuddy/binaries/python/envs/default/Scripts/cmake.exe",
+      "args": ["--build", "build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": {
+        "base": "$gcc",
+        "fileLocation": ["relative", "${workspaceFolder}"]
+      },
+      "detail": "只编译，不烧录。改了 .c 之后用这个。"
+    },
+    {
+      "label": "配置 CMake (Configure)",
+      "type": "shell",
+      "command": "C:/Users/orange/.workbuddy/binaries/python/envs/default/Scripts/cmake.exe",
+      "args": [
+        "-B", "build",
+        "-G", "Ninja",
+        "-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake",
+        "-DCMAKE_MAKE_PROGRAM=C:/Users/orange/.workbuddy/binaries/python/envs/default/Scripts/ninja.exe"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "detail": "只有第一次打开工程、或改了 CMakeLists.txt 之后才需要跑。"
+    },
+    {
+      "label": "烧录 (Flash)",
+      "type": "shell",
+      "command": "D:/App/openocd/bin/openocd.exe",
+      "args": [
+        "-s", "D:/App/openocd/openocd/scripts",
+        "-f", "interface/cmsis-dap.cfg",
+        "-f", "target/stm32f4x.cfg",
+        "-c", "program build/smart_cars.elf verify reset exit"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "detail": "把现有的 build/smart_cars.elf 写进芯片并校验。不重新编译。"
+    },
+    {
+      "label": "构建并烧录 (Build + Flash)",
+      "dependsOrder": "sequence",
+      "dependsOn": ["构建 (Build)", "烧录 (Flash)"],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": false },
+      "detail": "改完代码直接烧，最常用。"
+    },
+    {
+      "label": "擦除芯片 (Erase)",
+      "type": "shell",
+      "command": "D:/App/openocd/bin/openocd.exe",
+      "args": [
+        "-s", "D:/App/openocd/openocd/scripts",
+        "-f", "interface/cmsis-dap.cfg",
+        "-f", "target/stm32f4x.cfg",
+        "-c", "init; reset halt; stm32f4x mass_erase 0; shutdown"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "detail": "整片擦除。只在上电乱跑、怀疑 Flash 残留时用。"
+    }
+  ]
+}

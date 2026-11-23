@@ -16,3 +16,6 @@
 *.uvoptx
 *.uvguix.*
 /.vscode/*.log
+
+# CMake / Ninja 构建产物（全部由源码生成，不进版本库）
+/build/
