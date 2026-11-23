@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2026-11-23 工作汇报 · 构建链切换</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#1f2328;
+    --muted:#6b7280; --accent:#2563eb; --accent-soft:#eff4ff; --ok:#16a34a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:28px 16px 64px;
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  header{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:16px}
+  h1{font-size:20px;line-height:1.4;margin:0 0 6px}
+  .meta{margin:0;color:var(--muted);font-size:13px}
+  .progress{margin-top:16px;display:flex;align-items:center;gap:12px}
+  .bar{flex:1;height:6px;background:#eceff3;border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--ok);border-radius:99px;transition:width .2s ease}
+  #stat{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  #reset{
+    margin-top:12px;font:12px/1 inherit;color:var(--muted);background:#fff;
+    border:1px solid var(--line);border-radius:7px;padding:7px 11px;cursor:pointer;
+  }
+  #reset:hover{color:#b91c1c;border-color:#fca5a5}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden}
+  details.sub{border-radius:8px;background:#fcfcfd;margin:10px 0 0}
+  summary{
+    cursor:pointer;list-style:none;padding:14px 18px;
+    display:flex;align-items:center;gap:10px;font-weight:600;
+    user-select:none;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::before{
+    content:"";width:0;height:0;
+    border-left:6px solid #9aa3af;border-top:4.5px solid transparent;border-bottom:4.5px solid transparent;
+    transition:transform .15s ease;flex:none;
+  }
+  details[open] > summary::before{transform:rotate(90deg)}
+  summary:hover{background:var(--accent-soft)}
+  details.sub > summary{font-weight:600;font-size:13.5px;padding:10px 14px;color:#374151}
+  .cnt{
+    margin-left:auto;font-size:11.5px;font-weight:500;color:var(--muted);
+    background:#f0f2f5;border-radius:99px;padding:1px 9px;font-variant-numeric:tabular-nums;
+  }
+  .body{padding:4px 18px 16px}
+  .item{
+    display:flex;gap:10px;align-items:flex-start;
+    padding:7px 10px;border-radius:8px;cursor:pointer;
+  }
+  .item:hover{background:#f7f9fc}
+  .item input{margin:5px 0 0;flex:none;width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+  .item span{flex:1;transition:color .15s ease}
+  .item input:checked + span{color:#9ca3af;text-decoration:line-through;text-decoration-color:#d1d5db}
+  .text{padding:7px 10px;color:#374151}
+  .text code,.item code{background:#f0f2f5;border-radius:4px;padding:1.5px 5px;font-size:12.5px;
+    font-family:ui-monospace,Consolas,"Courier New",monospace}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+  th{background:#f7f9fc;font-weight:600}
+  .warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;margin:10px 0}
+  .ok{background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;margin:10px 0}
+  @media print{
+    body{background:#fff;padding:0}
+    details{break-inside:avoid;box-shadow:none}
+    #reset{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>2026-11-23 工作汇报 · 构建链切到 CMake + GCC + OpenOCD</h1>
+    <p class="meta">smart_cars / STM32F407VET6 / 分支 imu-dlpf-20hz @ 20b94fb、389d9f9 ｜ 编译已通，烧录待执行</p>
+    <div class="progress">
+      <div class="bar"><i id="bar"></i></div>
+      <span id="stat">0 / 0</span>
+    </div>
+    <button id="reset" type="button">清除勾选</button>
+  </header>
+
+  <details class="sec" open>
+    <summary>一、本轮交付（5 个新文件 + 2 处修改）<span class="cnt">7</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s1-1"><span><code>CMakeLists.txt</code> —— 用 GLOB 收集源码，以后加 <code>.c</code> 不用改构建脚本；Debug 默认 <code>-Og -g3</code>；自动产出 .elf/.hex/.bin/.map</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-2"><span><code>cmake/gcc-arm-none-eabi.cmake</code> —— 工具链文件。关键一行 <code>CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY</code>，不设它 CMake 试编译会因缺 <code>_write</code> 直接失败</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-3"><span><code>Core/Startup/startup_stm32f407xx.s</code> —— GCC 语法向量表，16 个系统异常 + 82 个外设中断，一个不少</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-4"><span><code>STM32F407VETX_FLASH.ld</code> —— 链接脚本：Flash 512K / RAM 128K / CCM 64K</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-5"><span><code>.vscode/tasks.json</code> —— 构建 / 配置 / 烧录 / 构建并烧录 / 擦除，五个任务</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-6"><span><code>Core/Src/usart.c</code> —— printf 重定向改条件编译：GCC 走 <code>_write</code>，ARMCC 走原 <code>fputc</code>。<strong>原 ARMCC 代码一字未改，只是被 <code>#else</code> 包住</strong></span></label>
+      <label class="item"><input type="checkbox" data-id="s1-7"><span><code>.gitignore</code> —— 加 <code>/build/</code>，产物不进版本库</span></label>
+      <div class="text">顺带删掉了 tasks.json 里原来那条 MinGW 的「gcc.exe 生成活动文件」任务 —— 它会把 <code>main.c</code> 用 x86 编译器编成 exe，对嵌入式是纯干扰。</div>
+    </div>
+  </details>
+
+  <details class="sec" open>
+    <summary>二、实测证据（不是「应该可以」）<span class="cnt">0</span></summary>
+    <div class="body">
+      <table>
+        <tr><th>检查项</th><th>实测结果</th></tr>
+        <tr><td>编译</td><td>退出码 <strong>0</strong>，无 error</td></tr>
+        <tr><td>Flash / RAM 占用</td><td><strong>30332 B / 512 KB（5.79%）</strong> ｜ <strong>7968 B / 128 KB（6.08%）</strong></td></tr>
+        <tr><td>向量表首字（栈顶）</td><td><code>0x20020000</code> —— 正好是 RAM 末尾，正确</td></tr>
+        <tr><td>向量表次字</td><td><code>0x08005D95</code> —— 是 <code>Reset_Handler</code>(0x08005D94) 加 1 的 Thumb 位，正确</td></tr>
+        <tr><td>向量表长度</td><td><code>0x188</code> = 392 字节 = 98 个字 = 16 + 82，正确</td></tr>
+        <tr><td>.data 段</td><td>VMA=<code>0x20000000</code>(RAM) / LMA=<code>0x08007590</code>(Flash)，搬运链路正确</td></tr>
+        <tr><td>芯片 Flash</td><td>OpenOCD <code>flash probe</code> 返回 <strong>512 KiB</strong>，与 .ld 完全一致</td></tr>
+        <tr><td>调试器</td><td><strong>CMSIS-DAP，FW 2.0.0</strong>（不是 ST-Link），DPIDR <code>0x2ba01477</code></td></tr>
+        <tr><td>实际烧录</td><td><strong>未执行</strong> —— 这一格现在是空的</td></tr>
+      </table>
+      <div class="warn"><strong>说清楚边界</strong>：以上证明「能编出正确的固件」和「烧录链路连得通」，<strong>不证明</strong>「烧进去能跑」。上电能不能转、串口能不能打，得真烧了才知道。</div>
+    </div>
+  </details>
+
+  <details class="sec">
+    <summary>三、踩到的三个坑（都不报在源码行上，最难查）<span class="cnt">0</span></summary>
+    <div class="body">
+      <div class="text"><strong>坑 1：<code>undefined reference to atan2f / sqrtf</code></strong><br>
+      我把 <code>-lc -lm</code> 写进了 <code>target_link_options</code>，CMake 把它生成到 <strong>对象文件前面</strong>。链接器是从左往右解析的，走到 <code>.obj</code> 发现需要 <code>atan2f</code> 时，库早就处理完了 → 找不到。<br>
+      正解：库要用 <code>target_link_libraries(m)</code>，这样才会排在对象文件后面。</div>
+      <div class="text"><strong>坑 2：<code>objcopy: .../´úÂë¿â/smallcars£¨renxun first/... No such file</code></strong><br>
+      工程路径含中文（<code>代码库</code>、<code>（renxun first</code>）。<code>objcopy</code> 经 <code>cmd.exe</code> 传绝对路径时被转成 GBK，变成乱码，文件当然找不到。<br>
+      正解：后处理命令改用<strong>相对文件名</strong> + <code>WORKING_DIRECTORY</code>，不传任何中文绝对路径。</div>
+      <div class="text"><strong>发现 3：cmake / ninja 原本都没装</strong><br>
+      这台机器只有 GCC 和 mingw32-make。已用 <code>pip install cmake ninja</code> 装进 WorkBuddy 的 Python 环境（cmake 4.4.5 / ninja 1.13.2）。那个环境若被重置，重装一次即可。</div>
+    </div>
+  </details>
+
+  <details class="sec" open>
+    <summary>四、烧录操作（按这个点，别跳步）<span class="cnt">5</span></summary>
+    <div class="body">
+      <div class="warn"><strong>第一步不是点烧录，是把车架起来。</strong><code>Task_Init()</code> 末尾会调 <code>Task_MotorControl_Start()</code>，烧完复位后四轮立刻按 150 mm/s 转，车放桌上会直接冲出去。</div>
+      <label class="item"><input type="checkbox" data-id="s4-1"><span>把车架起来，四轮悬空（或整车离地），手边留着急停开关（断电）</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-2"><span>VSCode 里按 <code>Ctrl+Shift+P</code> → 输入 <code>Tasks: Run Task</code> → 回车</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-3"><span>选「<strong>构建并烧录 (Build + Flash)</strong>」（想分开验就先选「构建」，再选「烧录」）</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-4"><span>看终端末尾应出现 <code>** Programming Finished **</code> 与 <code>** Verified OK **</code>；没有这两行就是没成功</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-5"><span>串口：USART2 / PA2-PA3 / 115200，确认能打出 <code>Task_Init</code> 的初始化日志 —— 这是「烧进去的到底是不是新代码」的唯一硬证据</span></label>
+      <details class="sub">
+        <summary>命令行等价写法（不想点任务时用）<span class="cnt">1</span></summary>
+        <div class="body">
+          <div class="text"><code>cmake --build build</code><br>
+          <code>D:/App/openocd/bin/openocd.exe -s D:/App/openocd/openocd/scripts -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg -c "program build/smart_cars.elf verify reset exit"</code></div>
+          <label class="item"><input type="checkbox" data-id="s4-sub-1"><span>试过命令行方式（知道 VSCode 只是转发命令）</span></label>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <details class="sec" open>
+    <summary>五、烧完验什么（对应验收标准 R1 / R5）<span class="cnt">4</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s5-1"><span>四个轮子<strong>都转</strong>（不是只有一个或两个）</span></label>
+      <label class="item"><input type="checkbox" data-id="s5-2"><span>方向对：四个轮子往前推时轮面都朝前转（若某个反了，先查 <code>encoder.c</code> 的符号，再查 <code>motor_run()</code> 里的极性翻转，<strong>别只改一处</strong>）</span></label>
+      <label class="item"><input type="checkbox" data-id="s5-3"><span>手转某个轮子整一圈，读 <code>TIM5->CNT</code> 变化量 ≈ <strong>40000</strong>（500 ppr × 4 倍频 × 20 减速比）</span></label>
+      <label class="item"><input type="checkbox" data-id="s5-4"><span>速度环方向正确：实测速度与目标同号（若符号反了会正反馈跑飞，立刻断电）</span></label>
+      <div class="text">如果出现「一转就冲到底再抖」，先别怀疑 PID 参数 —— 检查目标值单位与限幅是否一致。这条历史坑在 <code>PROJECT.md</code> §6 有记录。</div>
+    </div>
+  </details>
+
+  <details class="sec">
+    <summary>六、下一步（验收通过后才动）<span class="cnt">3</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s6-1"><span><code>.vscode/launch.json</code>（Cortex-Debug）—— 能停在 <code>main()</code>、能看变量、能设断点。需要先在 VSCode 装 Cortex-Debug 扩展</span></label>
+      <label class="item"><input type="checkbox" data-id="s6-2"><span>VOFA 链路（<strong>已定：USART2 + FireWater + 115200</strong>）—— 先修 <code>printf</code> 逐字节阻塞，再做 8 通道上行与命令下行</span></label>
+      <label class="item"><input type="checkbox" data-id="s6-3"><span>角度环（yaw → 差速），新增 <code>control.c</code>，顺手把速度环调度搬过去。构建链已通，加 <code>.c</code> 不再需要手改 <code>uvprojx</code></span></label>
+    </div>
+  </details>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var NOTE_ID = "smartcars-buildchain-2026-11-23";
+  var KEY = "note-html:" + NOTE_ID;
+
+  var boxes = Array.prototype.slice.call(
+    document.querySelectorAll('.item input[type="checkbox"]')
+  );
+
+  boxes.forEach(function(b,i){
+    if(!b.dataset.id) b.dataset.id = "auto-" + i;
+  });
+
+  var bar  = document.getElementById("bar");
+  var stat = document.getElementById("stat");
+
+  function progress(){
+    var done = 0;
+    boxes.forEach(function(b){ if(b.checked) done++; });
+    var total = boxes.length;
+    var pct = total ? Math.round(done / total * 100) : 0;
+    bar.style.width = pct + "%";
+    stat.textContent = done + " / " + total + "  ·  " + pct + "%";
+  }
+
+  function save(){
+    var state = {};
+    boxes.forEach(function(b){ if(b.checked) state[b.dataset.id] = 1; });
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){}
+  }
+
+  function load(){
+    var raw = null;
+    try { raw = localStorage.getItem(KEY); } catch(e){ return; }
+    if(!raw) return;
+    var state;
+    try { state = JSON.parse(raw); } catch(e){ return; }
+    boxes.forEach(function(b){ if(state[b.dataset.id]) b.checked = true; });
+  }
+
+  boxes.forEach(function(b){
+    b.addEventListener("change", function(){ save(); progress(); });
+  });
+
+  document.getElementById("reset").addEventListener("click", function(){
+    if(!confirm("清除这份笔记的全部勾选？")) return;
+    boxes.forEach(function(b){ b.checked = false; });
+    try { localStorage.removeItem(KEY); } catch(e){}
+    progress();
+  });
+
+  load();
+  progress();
+})();
+</script>
+</body>
+</html>
