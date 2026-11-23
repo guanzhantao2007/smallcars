@@ -8,6 +8,7 @@
 #include "tim.h"
 #include "usart.h"
 #include <stdint.h>
+#include <stdio.h>//解释：GCC 下 printf 必须先声明，否则隐式声明直接报错（ARMCC 宽容，GCC 不容忍）
 //------------------------------UART协议相关--------------------------------
 #define OBSTACLE_MARK  0x4EU
 #define FRAME_END      0x5AU
@@ -58,8 +59,113 @@ Motor motorRL = {1, BASE_SPEED, 1, 0.15f, 0.05f, 0.0f};
 Motor motorRR = {2, BASE_SPEED, 1, 0.15f, 0.0615f, 0.0f};
 Motor motorFL = {3, BASE_SPEED, 1, 0.132f, 0.04f, 0.0f};
 Motor motorFR = {4, BASE_SPEED, 1, 0.145f, 0.051f, 0.0f};
+
+//-------------------------速度环调度（10 ms 定时驱动）-------------------------
+#define MOTOR_CONTROL_PERIOD_MS 10U//解释：速度环节拍，10 ms 算一次，四轮同时算
+
+static Motor *const motor_table[TASK_MOTOR_COUNT] = {
+    &motorRL,//解释：下标 0 对应 motor_id 1
+    &motorRR,//解释：下标 1 对应 motor_id 2
+    &motorFL,//解释：下标 2 对应 motor_id 3
+    &motorFR //解释：下标 3 对应 motor_id 4
+};
+static float motor_target_mm_s[TASK_MOTOR_COUNT];//解释：四轮目标速度（mm/s），视觉帧或串口命令都写这里
+static uint8_t motor_control_on;//解释：速度环使能，0 表示四轮刹车
+static uint32_t motor_control_tick;//解释：上一次速度环计算的时刻
+
 static uint8_t line_tracking_active;
 static uint8_t task1_finished;
+
+static Motor *Task_MotorById(uint8_t motor_id)
+{
+  if ((motor_id < 1U) || (motor_id > TASK_MOTOR_COUNT))
+  {
+    return 0;
+  }
+  return motor_table[motor_id - 1U];
+}
+
+void Task_MotorControl_SetTarget(uint8_t motor_id, float target_mm_s)
+{
+  if (Task_MotorById(motor_id) == 0)
+  {
+    return;
+  }
+  /* 目标速度不允许为负：方向由 Motor.dir 管，不靠负速度表达。 */
+  if (!(target_mm_s > 0.0f))
+  {
+    target_mm_s = 0.0f;
+  }
+  motor_target_mm_s[motor_id - 1U] = target_mm_s;
+}
+
+float Task_MotorControl_GetTarget(uint8_t motor_id)
+{
+  if (Task_MotorById(motor_id) == 0)
+  {
+    return 0.0f;
+  }
+  return motor_target_mm_s[motor_id - 1U];
+}
+
+float Task_MotorControl_GetActual(uint8_t motor_id)
+{
+  if (Task_MotorById(motor_id) == 0)
+  {
+    return 0.0f;
+  }
+  return encoder_get_speed((int)motor_id);
+}
+
+void Task_MotorControl_Start(void)
+{
+  uint8_t i;
+
+  for (i = 0U; i < TASK_MOTOR_COUNT; ++i)
+  {
+    if (!(motor_target_mm_s[i] > 0.0f))
+    {
+      motor_target_mm_s[i] = (float)BASE_SPEED;
+    }
+  }
+  motor_control_on = 1U;
+  /* 把时间戳往回拨一个周期，让下一次 Update 立刻生效。 */
+  motor_control_tick = HAL_GetTick() - MOTOR_CONTROL_PERIOD_MS;
+}
+
+void Task_MotorControl_Stop(void)
+{
+  uint8_t i;
+
+  for (i = 0U; i < TASK_MOTOR_COUNT; ++i)
+  {
+    motor_target_mm_s[i] = 0.0f;
+  }
+  motor_control_on = 0U;
+  motor_control_tick = HAL_GetTick() - MOTOR_CONTROL_PERIOD_MS;
+}
+
+void Task_MotorControl_Update(void)
+{
+  uint32_t now = HAL_GetTick();
+  uint8_t i;
+  Motor *motor;
+
+  if ((uint32_t)(now - motor_control_tick) < MOTOR_CONTROL_PERIOD_MS)
+  {
+    return;
+  }
+  motor_control_tick = now;
+
+  for (i = 0U; i < TASK_MOTOR_COUNT; ++i)
+  {
+    motor = motor_table[i];
+    /* 每拍都用目标值覆盖 speed，PID 输出回写不到目标值上。
+       （Motor.motor_id 是 const 成员，结构体不能整体赋值，所以走指针。） */
+    motor->speed = (motor_control_on != 0U) ? (double)motor_target_mm_s[i] : 0.0;
+    motor_pid_run(*motor);
+  }
+}
 
 
 static uint16_t UartFifo_Next(uint16_t index)
@@ -117,26 +223,17 @@ static void LineTracking_Apply(void)
     right_speed = 1000.0;
   }
 
-  motorFL.speed = left_speed;
-  motorRL.speed = left_speed;
-  motorFR.speed = right_speed;
-  motorRR.speed = right_speed;
-  motor_pid_run(motorFL);
-  motor_pid_run(motorRL);
-  motor_pid_run(motorFR);
-  motor_pid_run(motorRR);
+  /* 只写目标值，不再直接调 PID —— 闭环由 Task_MotorControl_Update 按 10 ms 节拍跑。
+     这样视觉帧只负责"改目标"，帧停了速度环照样闭环（不会冻结在旧占空比上）。 */
+  Task_MotorControl_SetTarget(1U, (float)left_speed);//解释：motor_id 1 = 左后
+  Task_MotorControl_SetTarget(3U, (float)left_speed);//解释：motor_id 3 = 左前
+  Task_MotorControl_SetTarget(2U, (float)right_speed);//解释：motor_id 2 = 右后
+  Task_MotorControl_SetTarget(4U, (float)right_speed);//解释：motor_id 4 = 右前
 }
 
 static void LineTracking_Stop(void)
 {
-  motorFL.speed = 0.0;
-  motorFR.speed = 0.0;
-  motorRL.speed = 0.0;
-  motorRR.speed = 0.0;
-  motor_pid_run(motorFL);
-  motor_pid_run(motorFR);
-  motor_pid_run(motorRL);
-  motor_pid_run(motorRR);
+  Task_MotorControl_Stop();
   line_tracking_active = 0U;
 }
 
@@ -297,6 +394,12 @@ HAL_StatusTypeDef Task_Init(void)
   line_error = 0;
   line_tracking_active = 0U;
   task1_finished = 0U;
+  motor_control_on = 0U;
+  motor_control_tick = HAL_GetTick();
+  for (i = 0U; i < TASK_MOTOR_COUNT; ++i)
+  {
+    motor_target_mm_s[i] = 0.0f;
+  }
 
   __HAL_UART_CLEAR_IDLEFLAG(&huart1);
   status = HAL_UART_Receive_DMA(&huart1, uart_dma_buffer,
@@ -317,6 +420,7 @@ HAL_StatusTypeDef Task_Init(void)
   { 
     return HAL_ERROR;
   }
+  Task_MotorControl_Start();//解释：上电即启用速度环，目标 BASE_SPEED（验收时轮子必须架空）
   printf("Task_Init: all initialized successfully.\n");
   return OLED_Init(&hi2c2);
 }

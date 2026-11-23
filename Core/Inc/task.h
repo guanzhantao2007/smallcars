@@ -23,5 +23,19 @@ TaskState_t Task4_Run(void);
 TaskState_t Task5_Run(void);
 TaskState_t Task6_Run(void);
 
+//-------------------------速度环调度接口（motor_id 用 1~4）-------------------
+#define TASK_MOTOR_COUNT 4U
+
+/* 主循环每轮调用，内部按 10 ms 节拍闭环四个轮子。不阻塞。 */
+void Task_MotorControl_Update(void);
+/* 使能速度环：目标为 0 的轮子会被填成 BASE_SPEED。 */
+void Task_MotorControl_Start(void);
+/* 停止：四轮目标清零并刹车（下一次 Update 生效）。 */
+void Task_MotorControl_Stop(void);
+/* 写一个轮子的目标速度，单位 mm/s，负数按 0 处理。 */
+void Task_MotorControl_SetTarget(uint8_t motor_id, float target_mm_s);
+/* 读回目标速度 / 实测速度，单位都是 mm/s；motor_id 越界返回 0。 */
+float Task_MotorControl_GetTarget(uint8_t motor_id);
+float Task_MotorControl_GetActual(uint8_t motor_id);
 
 #endif

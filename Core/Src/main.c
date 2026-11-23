@@ -133,10 +133,8 @@ printf("successful initialization\n");
   {
     uint32_t now;
 
-    //motor_pid_run(motorFL);
-    //motor_pid_run(motorFR);
-    //motor_pid_run(motorRL);
-    //motor_pid_run(motorRR);
+    /* 速度环：内部按 10 ms 节拍闭环四轮，四轮目标由 task.c 管（视觉帧 / 串口命令写进去）。 */
+    Task_MotorControl_Update();
 
    
   

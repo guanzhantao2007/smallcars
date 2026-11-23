@@ -4,7 +4,10 @@
 #include "main.h"
 
 #define MOTOR_PWM_FULL_SCALE_PERCENT 100.0f
-#define MOTOR_SPEED_SAMPLE_PERIOD_MS 10U
+/* 这里只做"调用太密"的下限保护，不再是"10 ms 调度"。
+   节拍由调用方（task.c 的 Task_MotorControl_Update）统一给，dt 由函数内部实测，
+   所以周期在 5 ms 以上波动都能算对，不会出现两级节流互相打架。 */
+#define MOTOR_MIN_SAMPLE_PERIOD_MS 5U
 #define MOTOR_COUNT 4U
 
 typedef struct {
@@ -213,7 +216,7 @@ void motor_pid_run(Motor motor)
     state = &motor_pid_states[index];
     current_tick = HAL_GetTick();
     elapsed_ms = (uint32_t)(current_tick - state->previous_tick);
-    if (elapsed_ms < MOTOR_SPEED_SAMPLE_PERIOD_MS) {
+    if (elapsed_ms < MOTOR_MIN_SAMPLE_PERIOD_MS) {
         return;
     }
 
