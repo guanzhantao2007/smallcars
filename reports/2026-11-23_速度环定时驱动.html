@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>速度环改定时驱动 + 电机接回主循环</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#1f2328;
+    --muted:#6b7280; --accent:#2563eb; --accent-soft:#eff4ff; --ok:#16a34a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:14px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    padding:28px 16px 64px;
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  header{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:16px}
+  h1{font-size:20px;line-height:1.4;margin:0 0 6px}
+  .meta{margin:0;color:var(--muted);font-size:13px}
+  .progress{margin-top:16px;display:flex;align-items:center;gap:12px}
+  .bar{flex:1;height:6px;background:#eceff3;border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--ok);border-radius:99px;transition:width .2s ease}
+  #stat{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  #reset{
+    margin-top:12px;font:12px/1 inherit;color:var(--muted);background:#fff;
+    border:1px solid var(--line);border-radius:7px;padding:7px 11px;cursor:pointer;
+  }
+  #reset:hover{color:#b91c1c;border-color:#fca5a5}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden}
+  details.sub{border-radius:8px;background:#fcfcfd;margin:10px 0 0}
+  summary{
+    cursor:pointer;list-style:none;padding:14px 18px;
+    display:flex;align-items:center;gap:10px;font-weight:600;
+    user-select:none;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::before{
+    content:"";width:0;height:0;
+    border-left:6px solid #9aa3af;border-top:4.5px solid transparent;border-bottom:4.5px solid transparent;
+    transition:transform .15s ease;flex:none;
+  }
+  details[open] > summary::before{transform:rotate(90deg)}
+  summary:hover{background:var(--accent-soft)}
+  details.sub > summary{font-weight:600;font-size:13.5px;padding:10px 14px;color:#374151}
+  .cnt{
+    margin-left:auto;font-size:11.5px;font-weight:500;color:var(--muted);
+    background:#f0f2f5;border-radius:99px;padding:1px 9px;font-variant-numeric:tabular-nums;
+  }
+  .body{padding:4px 18px 16px}
+  .item{
+    display:flex;gap:10px;align-items:flex-start;
+    padding:7px 10px;border-radius:8px;cursor:pointer;
+  }
+  .item:hover{background:#f7f9fc}
+  .item input{margin:5px 0 0;flex:none;width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+  .item span{flex:1;transition:color .15s ease}
+  .item input:checked + span{color:#9ca3af;text-decoration:line-through;text-decoration-color:#d1d5db}
+  .text{padding:7px 10px;color:#374151}
+  .text code,.item code{background:#f0f2f5;border-radius:4px;padding:1.5px 5px;font-size:12.5px;
+    font-family:ui-monospace,Consolas,"Courier New",monospace}
+  .warn{background:#fff8f0;border-left:3px solid #f59e0b;padding:9px 12px;border-radius:6px;margin:8px 0}
+  @media print{
+    body{background:#fff;padding:0}
+    details{break-inside:avoid;box-shadow:none}
+    #reset{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>速度环改定时驱动 + 电机接回主循环</h1>
+    <p class="meta">2026-11-23 第二轮 ｜ 工程 smallcars（STM32F407VET6）｜ 分支 imu-dlpf-20hz ｜ 提交 914e8cc</p>
+    <div class="progress">
+      <div class="bar"><i id="bar"></i></div>
+      <span id="stat">0 / 0</span>
+    </div>
+    <button id="reset" type="button">清除勾选</button>
+  </header>
+
+  <details class="sec" open>
+    <summary>一、本轮做了什么<span class="cnt">6</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s1-1"><span>按你的决定切到最新提交：<code>git checkout -b imu-dlpf-20hz origin/imu-dlpf-20hz</code>，HEAD = <code>2a5afd2 视觉</code>；<code>main</code> 保留不动当回退点。</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-2"><span>逐行核实新分支的电机 / 编码器 / 任务调度链路，确认「差 12 倍」问题已不存在。</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-3"><span><b>把电机接回主循环</b>：<code>main.c</code> 的 <code>while(1)</code> 现在调 <code>Task_MotorControl_Update()</code>。</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-4"><span><b>速度环改定时驱动</b>：四轮目标存 <code>motor_target_mm_s[]</code>，按 10 ms 节拍闭环，视觉帧只写目标。</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-5"><span><code>motor.c</code> 的 10 ms 节流改成 5 ms 下限保护，节拍唯一由调度器掌握，不再两级节流互相打架。</span></label>
+      <label class="item"><input type="checkbox" data-id="s1-6"><span>用 arm-none-eabi-gcc 做语法与类型检查：<code>-Wall -Wextra</code> 全过、零警告（未链接、未烧录）。</span></label>
+
+      <details class="sub">
+        <summary>改动的四个文件<span class="cnt">4</span></summary>
+        <div class="body">
+          <div class="text"><code>Core/Inc/task.h</code> — 新增 <code>TASK_MOTOR_COUNT</code> 与 6 个接口：Update / Start / Stop / SetTarget / GetTarget / GetActual。</div>
+          <div class="text"><code>Core/Src/task.c</code> — 目标数组 + 调度器 + 四个轮的取用；<code>LineTracking_Apply</code> 改成只写目标；补 <code>&lt;stdio.h&gt;</code>（GCC 不容忍 printf 隐式声明）。</div>
+          <div class="text"><code>Core/Src/motor.c</code> — <code>MOTOR_SPEED_SAMPLE_PERIOD_MS 10U</code> → <code>MOTOR_MIN_SAMPLE_PERIOD_MS 5U</code>，只做下限保护。</div>
+          <div class="text"><code>Core/Src/main.c</code> — 4 行注释掉的 <code>motor_pid_run</code> 换成 1 行 <code>Task_MotorControl_Update()</code>。</div>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <details class="sec open>
+    <summary>二、关键发现（比代码本身更要紧）<span class="cnt">5</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s2-1"><span><b>上一轮报的「差 12 倍」只在 main 分支成立。</b> <code>2a5afd2</code> 已删掉 <code>MOTOR_SPEED_FULL_SCALE_MM_S</code>，<code>speed2pluse()</code> 改吃百分比、ARR 从传入定时器读。这两个 bug 确实修好了。</span></label>
+      <label class="item"><input type="checkbox" data-id="s2-2"><span>但真正卡住的是「环没接上」：<code>main.c</code> 里 <code>Task1_Run()</code> 和 4 个 <code>motor_pid_run()</code> 全被注释，电机根本没在跑。</span></label>
+      <label class="item"><input type="checkbox" data-id="s2-3"><span>速度环原来由视觉帧触发，<b>帧一停 PID 就冻结在最后占空比</b>，车按老速度盲跑。这是结构问题，不是参数问题。</span></label>
+      <label class="item"><input type="checkbox" data-id="s2-4"><span><code>Motor.motor_id</code> 是 <code>const</code> 成员，所以结构体<b>不能整体赋值</b>——第一版写成 <code>motor = *table[i]</code> 直接编译报错，改成指针才对。</span></label>
+      <label class="item"><input type="checkbox" data-id="s2-5"><span><code>printf</code> 的 <code>fputc</code> 是<b>逐字节阻塞发送</b>（<code>HAL_UART_Transmit(..., HAL_MAX_DELAY)</code>）。VOFA 要 50~100 Hz 发 8 通道，这个实现会把主循环卡死，必须先改成 DMA/环形缓冲。</span></label>
+      <div class="warn"><b>副作用要说清楚：</b><code>Task_Init()</code> 末尾调了 <code>Task_MotorControl_Start()</code>，所以<b>上电轮子就转（目标 150 mm/s）</b>。烧之前把车架空。</div>
+    </div>
+  </details>
+
+  <details class="sec" open>
+    <summary>三、待你决定（下一步会卡在这）<span class="cnt">3</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s3-1"><span><b>VOFA 走哪个串口？</b> USART2（已有 printf，省一个 USB-TTL，但数据和调试文字混线）／ UART5（PC12/PD2，干净独立，但要确认排针引出）／ 其他。</span></label>
+      <label class="item"><input type="checkbox" data-id="s3-2"><span><b>上行用哪个协议？</b> FireWater（文本，肉眼可读，115200 下 8 通道 100 Hz 约占 57% 带宽）／ JustFloat（二进制，36 字节一帧，约 31%，但串口助手看到的是乱码）。</span></label>
+      <label class="item"><input type="checkbox" data-id="s3-3"><span><b>波特率提到 460800 / 921600 吗？</b> 115200 下 FireWater 8 通道只能跑到 100 Hz 左右；提速后两个协议都宽松，但要改 <code>usart.c</code>（属于生成代码，需登记偏差）。</span></label>
+    </div>
+  </details>
+
+  <details class="sec open>
+    <summary>四、下一步（按顺序）<span class="cnt">4</span></summary>
+    <div class="body">
+      <label class="item"><input type="checkbox" data-id="s4-1"><span>烧一版，按 <code>docs/验收标准_电机动起来.md</code> 的 R1 / R5 验：四轮是否都转、方向对不对、<code>TIMx-&gt;CNT</code> 一圈是否 ≈ 40000。</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-2"><span>打通 CMake + GCC 编译链路（Agent 能自己跑编译、自己看报错）。</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-3"><span>VOFA+ 链路：8 通道上行（4 实际 + 4 目标）+ 下行命令（调 kp/ki、改目标、单路/四路、启停）。</span></label>
+      <label class="item"><input type="checkbox" data-id="s4-4"><span>角度环（yaw → 差速），新增 <code>control.c</code>；顺手把 <code>task.c</code> 里 130 行的速度环调度也搬过去（现在 536 行，超了 500 行上限）。</span></label>
+    </div>
+  </details>
+
+  <details class="sec">
+    <summary>五、验证证据（没有它就不算完成）<span class="cnt">2</span></summary>
+    <div class="body">
+      <div class="text">编译/检查命令：</div>
+      <div class="text"><code>arm-none-eabi-gcc -fsyntax-only -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard -DUSE_HAL_DRIVER -DSTM32F407xx -ICore/Inc -IDrivers/ST... -Wall -Wextra Core/Src/task.c Core/Src/motor.c Core/Src/main.c Core/Src/encoder.c</code></div>
+      <div class="text">输出：无任何 warning / error。逐文件扫 <code>Core/Src/*.c</code> 只发现 <code>oled.c</code> 一处<b>原有</b>的宏重定义警告（<code>OLED_H</code> 既是头文件守卫又是 64），与本轮无关，未改。</div>
+      <label class="item"><input type="checkbox" data-id="s5-1"><span>未做的验证：<b>没有链接、没有烧录、没有实测转速</b>。语法通过 ≠ 能跑。</span></label>
+      <label class="item"><input type="checkbox" data-id="s5-2"><span>git 提交：<code>914e8cc 速度环改定时驱动：目标值数组 + 10ms 调度，主循环接回</code></span></label>
+    </div>
+  </details>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var NOTE_ID = "smallcars-speedloop-timer-2026-11";
+  var KEY = "note-html:" + NOTE_ID;
+
+  var boxes = Array.prototype.slice.call(
+    document.querySelectorAll('.item input[type="checkbox"]')
+  );
+
+  boxes.forEach(function(b,i){
+    if(!b.dataset.id) b.dataset.id = "auto-" + i;
+  });
+
+  var bar  = document.getElementById("bar");
+  var stat = document.getElementById("stat");
+
+  function progress(){
+    var done = 0;
+    boxes.forEach(function(b){ if(b.checked) done++; });
+    var total = boxes.length;
+    var pct = total ? Math.round(done / total * 100) : 0;
+    bar.style.width = pct + "%";
+    stat.textContent = done + " / " + total + "  ·  " + pct + "%";
+  }
+
+  function save(){
+    var state = {};
+    boxes.forEach(function(b){ if(b.checked) state[b.dataset.id] = 1; });
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e){}
+  }
+
+  function load(){
+    var raw = null;
+    try { raw = localStorage.getItem(KEY); } catch(e){ return; }
+    if(!raw) return;
+    var state;
+    try { state = JSON.parse(raw); } catch(e){ return; }
+    boxes.forEach(function(b){ if(state[b.dataset.id]) b.checked = true; });
+  }
+
+  boxes.forEach(function(b){
+    b.addEventListener("change", function(){ save(); progress(); });
+  });
+
+  document.getElementById("reset").addEventListener("click", function(){
+    if(!confirm("清除这份笔记的全部勾选？")) return;
+    boxes.forEach(function(b){ b.checked = false; });
+    try { localStorage.removeItem(KEY); } catch(e){}
+    progress();
+  });
+
+  load();
+  progress();
+})();
+</script>
+</body>
+</html>
