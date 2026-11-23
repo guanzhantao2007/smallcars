@@ -4,18 +4,18 @@
 > 每轮工作结束必须追加一节「会话记录」。不要删历史，过时的划掉即可。
 > 事实去 `PROJECT.md`，纪律去 `AGENTS.md`，**这里只记"做到哪了、卡在哪、试过什么"**。
 
-**最后更新：2026-11-23 23:05**
+**最后更新：2026-11-23 23:30**
 
 ---
 
 ## 1. 当前阶段（一句话）
 
-**速度环已改成 10 ms 定时驱动、电机已接回主循环（提交 `914e8cc`）；代码层面「电机动起来」已就绪，还没烧录实测。下一步：烧一版验方向与计数，然后打通 CMake 链路。**
+**构建链已换成 CMake + arm-none-eabi-gcc + OpenOCD，编译实测通过（提交 `20b94fb`），VSCode 里「构建」和「构建并烧录」两个任务已配好；固件 `build/smart_cars.elf` 已生成，但还没烧进芯片。下一步：架空车 → 烧第一版 → 验电机方向与编码器计数。**
 
-进度：`[#####-----] 5/10`（PWM、编码器、IMU、task 拆分、串口收发、视觉接口、**电机调度已接回**；构建链未打通、VOFA 未做、角度环未开始）
+进度：`[######----] 6/10`（PWM、编码器、IMU、task 拆分、串口收发、视觉接口、电机调度、**构建链**；烧录实测、VOFA、角度环未开始）
 
-**当前分支**：`imu-dlpf-20hz` @ `914e8cc`（比远程多 1 个本地提交）
-**回退点**：`main` = `19a734b Initial project upload`（不动，`git checkout main` 可回）；上一个稳定点 `2a5afd2 视觉`
+**当前分支**：`imu-dlpf-20hz` @ `20b94fb`（比远程多 2 个本地提交）
+**回退点**：`914e8cc`（速度环定时驱动，构建链之前的稳定点）｜`main` = `19a734b`（初始上传，`git checkout main` 可回）
 
 > ⚠ **上电即闭环，目标 150 mm/s —— 烧录前把车架空。**
 
@@ -47,7 +47,11 @@
 | **速度环改 10 ms 定时驱动** | 2026-11-23 | 提交 `914e8cc`：目标数组 `motor_target_mm_s[]` + `Task_MotorControl_Update()` |
 | **电机接回主循环** | 2026-11-23 | 提交 `914e8cc`：`main.c` 调 `Task_MotorControl_Update()`，`Task_Init()` 末尾 Start |
 | GCC 语法/类型检查通过 | 2026-11-23 | `-Wall -Wextra` 零警告；**未链接、未烧录** |
-| VOFA 需求草案 | 2026-11-23 | `docs/VOFA调试链路_设计草案.md`（端口/协议/波特率待定） |
+| **CMake + GCC 构建链打通** | 2026-11-23 | 提交 `20b94fb`：`CMakeLists.txt`、工具链文件、GCC 启动文件、`.ld`、5 个 VSCode 任务 |
+| **编译实测通过** | 2026-11-23 | 退出码 0；Flash 30332 B / 512 KB (5.79%)，RAM 7968 B / 128 KB (6.08%) |
+| **烧录链路实测到 probe** | 2026-11-23 | OpenOCD 0.12.0 + CMSIS-DAP(FW 2.0.0) 连通；`flash probe` 返回 **512 KiB** |
+| 调试器类型确认 | 2026-11-23 | **CMSIS-DAP，不是 ST-Link**；设备名带 `ATK_`，虚拟串口 COM11 |
+| VOFA 需求草案 | 2026-11-23 | `docs/VOFA调试链路_设计草案.md`；**已定 USART2 + FireWater + 115200** |
 
 ---
 
@@ -55,9 +59,9 @@
 
 | 事项 | 进度 | 卡在哪 |
 |---|---|---|
-| 烧录验收（R1 / R5） | 0% | 等你烧；**轮子必须架空**（上电即转） |
-| VSCode 编译链路打通 | 0%（只有方案，没动文件） | 需建 7 个文件 + 改 1 处 `printf` 重定向，见 `PROJECT.md` §8.2 / §8.3 |
-| VOFA+ 调试链路 | 0%（草案已写） | 卡 3 个决定：串口（USART2/UART5）、上行协议（FireWater/JustFloat）、波特率 |
+| 烧录验收（R1 / R5） | 0% | 固件已编好，只差 `program` 一步；**轮子必须架空**（上电即 150 mm/s） |
+| `.vscode/launch.json`（F5 断点调试） | 0% | 需要装 Cortex-Debug 扩展；烧录验证通过后再做 |
+| VOFA+ 调试链路 | 5%（草案 + 三项决定已定） | 下一步写 `vofa.c`；**先修 printf 逐字节阻塞发送**（已知问题 12） |
 
 ---
 
@@ -101,10 +105,11 @@
 
 ## 6. 下一步（按顺序）
 
-1. **烧一版**，按 `docs/验收标准_电机动起来.md` 的 R1 / R5 验：四轮都转？方向对？`TIMx->CNT` 一圈 ≈ 40000？（轮子架空）
-2. **打通 CMake + GCC 编译链路**（Agent 能自己跑编译看报错）
-3. **VOFA+ 链路**（`docs/VOFA调试链路_设计草案.md`）：先修 `printf` 阻塞 → 8 通道上行 → 收命令 → 在线改增益
-4. **角度环**（yaw → 差速），新增 `control.c`，顺手把速度环调度搬过去
+1. **架空车 → 烧第一版**：VSCode 里 `Ctrl+Shift+P` → `Tasks: Run Task` → 「构建并烧录」。按 `docs/验收标准_电机动起来.md` 的 R1/R5 验：四轮都转？方向对？`TIMx->CNT` 一圈 ≈ 40000？
+2. **验串口**：USART2 @115200 能否打出 `Task_Init` 的初始化日志 —— 这是"烧进去的到底是不是新代码"的唯一硬证据
+3. **`.vscode/launch.json`**（Cortex-Debug）：能停在 `main()`、能看变量、能设断点
+4. **VOFA+ 链路**（**USART2 + FireWater + 115200 已定**）：先修 `printf` 逐字节阻塞 → 8 通道上行 → 收命令 → 在线改增益
+5. **角度环**（yaw → 差速），新增 `control.c`，顺手把速度环调度搬过去（构建链已通，加 `.c` 不再需要手改 `uvprojx`）
 
 ---
 
@@ -183,3 +188,36 @@
 - 烧录验收 R1/R5（**轮子架空**，上电即 150 mm/s）
 - 若某轮反转：先查 `encoder.c` 的符号，再查 `motor_run()` 里的极性翻转，**别只改一处**
 - VOFA 草案已写好，卡 3 个决定（串口 / 协议 / 波特率）
+
+### 2026-11-23 第四次会话（构建链切 CMake+GCC+OpenOCD，提交 20b94fb）
+**车主决定**
+- VOFA：**USART2 + FireWater + 115200**（三项全定）
+- 编译路：**GCC + CMake**（不装 EIDE、不调 UV4）
+- 首烧版本：**直接烧现在这版**（上电轮子就转，必须架空）
+
+**做了什么（新增 5 个文件，改 2 个）**
+- `CMakeLists.txt`：GLOB 收集 `Core/Src/*.c` 与 HAL `Src/*.c`，加 `.c` 不用改脚本；Debug `-Og -g3`；产物 `.elf/.hex/.bin/.map`
+- `cmake/gcc-arm-none-eabi.cmake`：工具链文件，`CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY`
+- `Core/Startup/startup_stm32f407xx.s`：GCC 语法向量表，16 系统异常 + 82 外设中断
+- `STM32F407VETX_FLASH.ld`：Flash 512K / RAM 128K / CCM 64K
+- `.vscode/tasks.json`：构建 / 配置 / 烧录 / 构建并烧录 / 擦除；**删掉了原来误配的 MinGW gcc 任务**
+- `Core/Src/usart.c`：printf 重定向改条件编译（GCC 走 `_write`，ARMCC 原代码一字未改）
+- `.gitignore`：加 `/build/`
+
+**实测证据**
+- `cmake --build build` 退出码 0，无 error
+- 向量表首字 `0x20020000`（RAM 末尾），次字 `0x08005D95`（`Reset_Handler`+1）
+- `.data` VMA=`0x20000000` / LMA=`0x08007590`（Flash 加载、RAM 运行）
+- OpenOCD `flash probe` → **512 KiB**，与 `.ld` 一致
+- Flash 30332 B / 512 KB (5.79%)，RAM 7968 B / 128 KB (6.08%)
+- **未烧录、未上电实测**
+
+**踩到的坑（两个都不报错在源码行，很难查）**
+- `-lc -lm` 放进 `target_link_options` → 排到 `.obj` 之前 → `undefined reference to atan2f/sqrtf`。改用 `target_link_libraries(m)`
+- 工程路径含中文，`objcopy` 经 `cmd.exe` 传绝对路径被转 GBK 乱码 → 后处理改相对文件名 + `WORKING_DIRECTORY`
+- 顺带确认：调试器是 **CMSIS-DAP（FW 2.0.0）**，不是 ST-Link；cmake/ninja 原先没装，已 pip 装到 WorkBuddy 的 Python 环境
+
+**留给下一轮**
+- 烧录 + 串口验证（USART2 / PA2-PA3 / 115200）
+- **注意**：`-u _printf_float` 目前没加，因为全工程没有 `%f`；VOFA 打印速度值时必须加
+- `build/` 已被 git 忽略，产物不进版本库

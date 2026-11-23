@@ -223,7 +223,10 @@ TIM6 (940Hz 中断) ──► IMU_Tick1ms() ──► IMU_Update() 在主循环�
 | 编码器接口模式 | TI12（4 倍频） | `.ioc` `EncoderMode` |
 | MPU6050 地址 | 0x68 | `imu.c` + 原理图 AD0=GND |
 | 串口波特率 | 115200 | `usart.c` |
-| 编译器（遗留 Keil 工程） | ARMCC AC5 V5.06u5，-O3 | `uvprojx`；**目标链路改用 arm-none-eabi-gcc**，见 §8 |
+| 编译器（**现用**） | **arm-none-eabi-gcc 14.3.1**，`-Og -g3` | `CMakeLists.txt`，2026-11-23 实测编译通过（§8） |
+| 编译器（遗留 Keil，已不用） | ARMCC AC5 V5.06u5，-O3 | `uvprojx`；保留作对照，随时可切回 |
+| 芯片 Flash 容量（实测） | **512 KiB** | OpenOCD `flash probe 0` 返回，与 `.ld` 一致 |
+| 调试器（实测） | **CMSIS-DAP，FW 2.0.0** | OpenOCD 识别，DPIDR `0x2ba01477` |
 | 编码器线数 | **500 ppr** | MG310 官方规格图（2026-11-23 核对） |
 | 减速比 | **1:20** | MG310 官方规格图 |
 | 轮径 | **48 mm** | MG310 配件规格图 |
@@ -271,65 +274,108 @@ TIM6 (940Hz 中断) ──► IMU_Tick1ms() ──► IMU_Update() 在主循环�
 
 ---
 
-## 8. 构建与烧录（VSCode 链路，**待打通**）
+## 8. 构建与烧录（VSCode 链路）
 
-### 8.1 目标链路
+**本节状态（2026-11-23 23:25 实测）**：编译 ✅ 通过｜OpenOCD 连接 ✅ 通过｜`flash probe` ✅ 512 KiB｜**实际烧录 ⏳ 尚未执行**（等确认车已架空）
+
+### 8.1 实际链路（已落地，不再是计划）
 
 ```
-VSCode  ──► CMake + Ninja ──► arm-none-eabi-gcc ──► build/smart_cars.elf
-   │                                                    │
-   └──► Cortex-Debug ──► OpenOCD ──► ST-Link / CMSIS-DAP ──► 烧录 + GDB 调试
+VSCode 任务  ──► CMake + Ninja ──► arm-none-eabi-gcc 14.3.1 ──► build/smart_cars.elf
+                                                                       │
+                                                                       ▼
+                                        OpenOCD 0.12.0 ──► CMSIS-DAP (FW 2.0.0) ──► STM32F407VET6
 ```
 
-VSCode 本身不编译也不烧录，只负责"转发命令"和"显示调试界面"。每一层都能单独用命令行验证。
+工具位置与版本（全部实测）：
 
-### 8.2 需要新建的文件（**尚未创建**）
-
-| 文件 | 作用 | 来源 |
+| 工具 | 路径 | 版本 |
 |---|---|---|
-| `CMakeLists.txt` | 源文件清单 + 编译参数 + 链接参数 | 手写（不重新生成 CubeMX） |
-| `cmake/gcc-arm-none-eabi.cmake` | 工具链文件（必须写在 `project()` 之前） | 手写 |
-| `STM32F407VETx_FLASH.ld` | GCC 链接脚本（替代 `.sct`） | ST 官方 CubeF4 仓库 |
-| `startup_stm32f407xx.s`（GCC 版） | 向量表与复位入口（替代 ARMCC 版） | CMSIS / ST 官方仓库 |
-| `.vscode/tasks.json` | 编译任务 | 手写 |
-| `.vscode/launch.json` | 调试配置（ST-Link / DAP 两套） | 手写 |
-| `.vscode/c_cpp_properties.json` | 补全路径，指向 `build/compile_commands.json` | 改写现有 |
+| arm-none-eabi-gcc | `D:\App\gnu-toolchain\bin` | **14.3.1** |
+| OpenOCD | `D:\App\openocd\bin\openocd.exe` | **0.12.0** |
+| OpenOCD 脚本目录 | `D:\App\openocd\openocd\scripts` | — |
+| cmake | `C:\Users\orange\.workbuddy\binaries\python\envs\default\Scripts\cmake.exe` | **4.4.5** |
+| ninja | 同上目录 | **1.13.2** |
+| 调试器 | **CMSIS-DAP（不是 ST-Link）**，虚拟串口 COM11 | FW **2.0.0** |
 
-### 8.3 三处必须改的代码（GCC 兼容）
+> cmake/ninja 是 pip 装在 WorkBuddy 内置 Python 环境里的。若该环境被重置，重跑一次 `pip install cmake ninja` 即可。
 
-| 位置 | 现状（ARMCC） | 改成（GCC） |
+### 8.2 已创建的文件
+
+| 文件 | 作用 | 状态 |
 |---|---|---|
-| `Core/Src/usart.c` L26-32 | `struct __FILE{}` + `FILE __stdout` + `#pragma import(__use_no_semihosting)` + `fputc` | `int _write(int fd, char *ptr, int len)` 包一层 `HAL_UART_Transmit` |
-| `MDK-ARM/startup_stm32f407xx.s` | ARMCC 汇编语法 | 换 GCC 版（**不要改原文件，新增一份**） |
-| `MDK-ARM/smart_cars/smart_cars.sct` | ARMCC 分散加载 | 换 `.ld`（新增，不动原文件） |
+| `CMakeLists.txt` | 源文件 GLOB 收集 + 编译/链接参数 + hex/bin 后处理 | ✅ 已建，编译通过 |
+| `cmake/gcc-arm-none-eabi.cmake` | 工具链文件 | ✅ 已建 |
+| `STM32F407VETX_FLASH.ld` | GCC 链接脚本（Flash 512K / RAM 128K / CCM 64K） | ✅ 已建 |
+| `Core/Startup/startup_stm32f407xx.s` | GCC 语法向量表（16 系统 + 82 中断） | ✅ 已建 |
+| `.vscode/tasks.json` | 构建 / 配置 / 烧录 / 构建并烧录 / 擦除 | ✅ 已建 |
+| `.vscode/launch.json` | F5 调试（Cortex-Debug） | ❌ **未建**，下一步 |
 
-### 8.4 关键编译参数（照这个配，别自己发明）
+> `MDK-ARM/startup_stm32f407xx.s`（ARMCC 版）与 `.sct` **原样保留没动**，Keil 链路随时可用作对照。
+
+### 8.3 GCC 兼容处理（已落地）
+
+| 位置 | 处理方式 | 状态 |
+|---|---|---|
+| `Core/Src/usart.c` USER CODE 0 | 改成 `#if defined(__GNUC__)` 分支：GCC 走 `_write()`，ARMCC 走原来的 `fputc`。**原 ARMCC 代码一字未改，只是被 `#else` 包住** | ✅ |
+| 启动文件 | 新增 `Core/Startup/startup_stm32f407xx.s`（GCC 语法）；`MDK-ARM/` 下的 ARMCC 版不动 | ✅ |
+| 链接脚本 | 新增 `STM32F407VETX_FLASH.ld`；ARMCC 用 `.sct`，不动 | ✅ |
+
+### 8.4 关键编译参数（实际生效的）
 
 ```
 -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
--Og -g3            (Debug；别用 -O2/-O3，否则变量被优化掉，断点看不到值)
---specs=nano.specs (否则 printf 一进来 Flash 涨几十 KB)
--ffunction-sections -Wl,--gc-sections
--u _printf_float   (要打印浮点必须加)
+-Og -g3 -gdwarf-2   (Debug 默认；别用 -O2/-O3，否则变量被优化掉、断点看不到值)
+--specs=nano.specs  (newlib-nano，printf 体积小)
+--specs=nosys.specs (提供 _close/_fstat/_read 空桩；链接会报几条 warning，无害)
+-ffunction-sections -fdata-sections -Wl,--gc-sections
+-Wl,--print-memory-usage (链接完直接打印 Flash/RAM 占用)
 ```
 
-### 8.5 打通顺序（三步各自独立验证，不要跳）
+**当前没有加 `-u _printf_float`**：全工程没有 `%f`（已 grep 确认），nano 版 printf 够用。
+**一旦要打印浮点（VOFA 调试打速度值就会用到），必须加 `-u _printf_float`**，否则 `%f` 输出空白或乱码，**不报错、极难查**。
 
-1. **命令行编译**：`cmake -B build -G Ninja && cmake --build build -j` → 产出 `.elf`，`arm-none-eabi-size build/smart_cars.elf` 能看出 Flash/RAM 占用
-2. **命令行烧录**：`openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program build/smart_cars.elf verify reset exit"` → 看到 `Verified OK`
-3. **F5 调试**：能停在 `main()`、能看变量、能设断点
+### 8.5 三条命令（全部实测过，可直接复制）
 
-> 报错时按 1→2→3 倒查，立刻能分清是构建问题、连接问题还是调试适配器问题。
-> **每打通一步，把实测过的命令写回本节并标注【已实测】。**
+```bash
+# ① 配置（只有第一次 / 改了 CMakeLists.txt 才需要）
+cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+      -DCMAKE_MAKE_PROGRAM=C:/Users/orange/.workbuddy/binaries/python/envs/default/Scripts/ninja.exe
 
-### 8.6 OpenOCD 两套配置
+# ② 编译（日常只用这条）
+cmake --build build
 
-| 烧录器 | interface 配置 | 说明 |
+# ③ 烧录（注意：先架空车！上电即 150 mm/s）
+D:/App/openocd/bin/openocd.exe -s D:/App/openocd/openocd/scripts \
+  -f interface/cmsis-dap.cfg -f target/stm32f4x.cfg \
+  -c "program build/smart_cars.elf verify reset exit"
+```
+
+| 步骤 | 实测结果 |
+|---|---|
+| ① 配置 | ✅ `The C compiler identification is GNU 14.3.1` |
+| ② 编译 | ✅ 退出码 0；Flash 30332 B / 512 KB (5.79%)，RAM 7968 B / 128 KB (6.08%) |
+| ③ 烧录 | ⏳ 命令已验证到 `flash probe`（返回 `flash size = 512 KiB`），**尚未 program** |
+
+**在 VSCode 里**：`Ctrl+Shift+P` → `Tasks: Run Task` → 选「构建并烧录 (Build + Flash)」。`Ctrl+Shift+B` 默认只编译。
+
+### 8.5.1 打通这条链路踩到的两个坑（下次别再踩）
+
+| 现象 | 根因 | 解法 |
 |---|---|---|
-| ST-Link | `interface/stlink.cfg` | Windows 下若报找不到适配器，用 Zadig 把接口改成 WinUSB |
-| CMSIS-DAP / DAP-Link | `interface/cmsis-dap.cfg` | 核心板板载 DAP 通常免驱 |
+| `undefined reference to atan2f/sqrtf` | `-lc -lm` 写在 `target_link_options` 里，被排到 `.obj` **之前**；链接器左→右解析，遇到对象文件时库已经处理完了 | 用 `target_link_libraries(... m)` |
+| `objcopy: .../´úÂë¿â/smallcars£¨renxun first/... No such file` | 工程路径含中文，`objcopy` 经 `cmd.exe` 传参被转成 GBK 乱码 | 后处理命令改用**相对文件名** + `WORKING_DIRECTORY` |
 
-target 都是 `target/stm32f4x.cfg`。
+### 8.6 OpenOCD 配置（实测锁定 CMSIS-DAP）
+
+| 烧录器 | interface 配置 | 本项目 |
+|---|---|---|
+| **CMSIS-DAP / DAP-Link** | `interface/cmsis-dap.cfg` | ✅ **本项目就是这种**，实测 FW 2.0.0，免驱 |
+| ST-Link | `interface/stlink.cfg` | 备用；Windows 下若报找不到适配器，用 Zadig 改成 WinUSB |
+
+target 统一 `target/stm32f4x.cfg`。
+
+> 判定依据：设备管理器里是 `VID_04D8/PID_00DF` 复合设备（名字带 `ATK_`），OpenOCD 自动识别为 `CMSIS-DAP: FW Version = 2.0.0`，并成功读出 `SWD DPIDR 0x2ba01477`。**不是 ST-Link。**
 
 ### 8.7 观察输出
 
@@ -369,10 +415,11 @@ main loop (无阻塞)
 - [x] 决策：`BASE_SPEED 150` 量纲 = **mm/s**（D1）
 - [x] 决策：最大占空比 **保持 100% 不设上限**（D3）
 - [x] 决策：帧停后**保持最后目标继续闭环**（D2）
-- [ ] **烧一版验证电机动起来 + 方向正确**（验收标准见 `docs/验收标准_电机动起来.md`）
-- [ ] **打通 VSCode 编译链路**（CMake + GCC + OpenOCD，见 §8.2）
+- [ ] **烧一版验证电机动起来 + 方向正确**（验收标准见 `docs/验收标准_电机动起来.md`；固件已编好，只差 `program` 这一步，**必须架空车**）
+- [x] **打通 VSCode 编译链路**（CMake + GCC + OpenOCD，`20b94fb`；编译 ✅、flash probe ✅、实际 program ⏳）
+- [ ] `.vscode/launch.json`（Cortex-Debug，F5 断点调试）
 - [ ] 决策：`LINE_STEERING_GAIN` 设为多少（现在是 0，等于不转向）
 - [ ] 单轮速度环整定（先 1 个轮子跑通，再复制到 4 个）
-- [ ] **VOFA+ 上位机**：四路目标/实际速度曲线 + 滑块调 kp/ki/目标 + 启停命令（**架构草案见 `docs/VOFA调试链路_设计草案.md`**，端口/协议/波特率三项待定）
+- [ ] **VOFA+ 上位机**（**已定：USART2 + FireWater + 115200**，见 `docs/VOFA调试链路_设计草案.md`）
 - [ ] 角度环（yaw 闭环 → 差速），新增 `control.c`
 - [ ] 拆 `control.c`（`task.c` 已 536 行，见 §5 技术债）
